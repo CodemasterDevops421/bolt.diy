@@ -32,11 +32,32 @@ dist-ssr
 .wrangler
 _worker.bundle
 
+# react-router generated types
+.react-router
+
 Modelfile
 modelfiles
+
+# vite temp config files (contain absolute paths from the generating machine)
+vite.config.ts.timestamp-*.mjs
+vite.*.timestamp-*.mjs
 
 # docs ignore
 site
 
 # commit file ignore
 app/commit.json
+changelogUI.md
+docs/instructions/Roadmap.md
+.cursorrules
+*.md
+!docs/mcp-tool-migration.md
+.qodo
+
+test-results/
+
+# Playwright E2E test artifacts
+playwright-report
+test-results
+test-results.json
+test-results-summary.txt

@@ -1,9 +1,11 @@
 import type { WebContainer, WebContainerProcess } from '@webcontainer/api';
-import type { ITerminal } from '~/types/terminal';
-import { withResolvers } from './promises';
 import { atom } from 'nanostores';
+import { withResolvers } from './promises';
+import { expoUrlAtom } from '~/lib/stores/qrCodeStore';
+import { recordTerminalCommand } from '~/lib/stores/terminalContext';
+import type { ITerminal } from '~/types/terminal';
 
-export async function newShellProcess(webcontainer: WebContainer, terminal: ITerminal) {
+export async function newShellProcess(webcontainer: WebContainer, terminal: ITerminal, terminalName = 'Terminal') {
   const args: string[] = [];
 
   // we spawn a JSH process with a fallback cols and rows in case the process is not attached yet to a visible terminal
@@ -20,6 +22,10 @@ export async function newShellProcess(webcontainer: WebContainer, terminal: ITer
   const jshReady = withResolvers<void>();
 
   let isInteractive = false;
+  let pendingCommand = '';
+  let activeCommand = '';
+  let activeCommandOutput = '';
+
   output.pipeTo(
     new WritableStream({
       write(data) {
@@ -35,6 +41,43 @@ export async function newShellProcess(webcontainer: WebContainer, terminal: ITer
         }
 
         terminal.write(data);
+
+        if (activeCommand) {
+          activeCommandOutput += data;
+
+          const exitMatch = activeCommandOutput.match(/\x1b\]654;exit=?(-?\d+)(?::\d+)?\x07/);
+
+          if (exitMatch) {
+            recordTerminalCommand({
+              terminalName,
+              command: activeCommand,
+              output: cleanTerminalOutput(activeCommandOutput),
+              exitCode: Number(exitMatch[1]),
+            });
+            activeCommand = '';
+            activeCommandOutput = '';
+          } else if (activeCommandOutput.length > 100_000) {
+            activeCommandOutput = activeCommandOutput.slice(-80_000);
+          }
+        }
+
+        // Capture terminal output for debugging
+        try {
+          import('~/utils/debugLogger')
+            .then(({ captureTerminalLog }) => {
+              // Clean the data by removing ANSI escape sequences for logging
+              const cleanData = data.replace(/\x1b\[[0-9;]*[mG]/g, '').trim();
+
+              if (cleanData) {
+                captureTerminalLog(cleanData, 'output');
+              }
+            })
+            .catch(() => {
+              // Ignore if debug logger is not available
+            });
+        } catch {
+          // Ignore errors in debug logging
+        }
       },
     }),
   );
@@ -44,6 +87,45 @@ export async function newShellProcess(webcontainer: WebContainer, terminal: ITer
 
     if (isInteractive) {
       input.write(data);
+
+      const printableInput = data.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '');
+
+      for (const character of printableInput) {
+        if (character === '\r' || character === '\n') {
+          const command = pendingCommand.trim();
+
+          if (command) {
+            activeCommand = command;
+            activeCommandOutput = '';
+          }
+
+          pendingCommand = '';
+        } else if (character === '\x7f' || character === '\b') {
+          pendingCommand = pendingCommand.slice(0, -1);
+        } else if (character === '\x15') {
+          pendingCommand = '';
+        } else if (character >= ' ') {
+          pendingCommand += character;
+        }
+      }
+
+      // Capture terminal input for debugging
+      try {
+        import('~/utils/debugLogger')
+          .then(({ captureTerminalLog }) => {
+            // Clean the data and check if it's a command (not just cursor movement)
+            const cleanData = data.replace(/\x1b\[[0-9;]*[A-Z]/g, '').trim();
+
+            if (cleanData && cleanData !== '\r' && cleanData !== '\n') {
+              captureTerminalLog(cleanData, 'input');
+            }
+          })
+          .catch(() => {
+            // Ignore if debug logger is not available
+          });
+      } catch {
+        // Ignore errors in debug logging
+      }
     }
   });
 
@@ -64,6 +146,8 @@ export class BoltShell {
     { sessionId: string; active: boolean; executionPrms?: Promise<any>; abort?: () => void } | undefined
   >();
   #outputStream: ReadableStreamDefaultReader<string> | undefined;
+  #outputBuffer = '';
+  #commandPreparationQueue: Promise<void> = Promise.resolve();
   #shellInputStream: WritableStreamDefaultWriter<string> | undefined;
 
   constructor() {
@@ -80,68 +164,21 @@ export class BoltShell {
     this.#webcontainer = webcontainer;
     this.#terminal = terminal;
 
-    const { process, output } = await this.newBoltShellProcess(webcontainer, terminal);
+    // Use all three streams from tee: one for terminal, one for command execution, one for Expo URL detection
+    const { process, commandStream, expoUrlStream } = await this.newBoltShellProcess(webcontainer, terminal);
     this.#process = process;
-    this.#outputStream = output.getReader();
+    this.#outputStream = commandStream.getReader();
+
+    // Start background Expo URL watcher immediately
+    this._watchExpoUrlInBackground(expoUrlStream);
+
     await this.waitTillOscCode('interactive');
     this.#initialized?.();
-  }
-
-  get terminal() {
-    return this.#terminal;
-  }
-
-  get process() {
-    return this.#process;
-  }
-
-  async executeCommand(sessionId: string, command: string, abort?: () => void): Promise<ExecutionResult> {
-    if (!this.process || !this.terminal) {
-      return undefined;
-    }
-
-    const state = this.executionState.get();
-
-    if (state?.active && state.abort) {
-      state.abort();
-    }
-
-    /*
-     * interrupt the current execution
-     *  this.#shellInputStream?.write('\x03');
-     */
-    this.terminal.input('\x03');
-    await this.waitTillOscCode('prompt');
-
-    if (state && state.executionPrms) {
-      await state.executionPrms;
-    }
-
-    //start a new execution
-    this.terminal.input(command.trim() + '\n');
-
-    //wait for the execution to finish
-    const executionPromise = this.getCurrentExecutionResult();
-    this.executionState.set({ sessionId, active: true, executionPrms: executionPromise, abort });
-
-    const resp = await executionPromise;
-    this.executionState.set({ sessionId, active: false });
-
-    if (resp) {
-      try {
-        resp.output = cleanTerminalOutput(resp.output);
-      } catch (error) {
-        console.log('failed to format terminal output', error);
-      }
-    }
-
-    return resp;
   }
 
   async newBoltShellProcess(webcontainer: WebContainer, terminal: ITerminal) {
     const args: string[] = [];
 
-    // we spawn a JSH process with a fallback cols and rows in case the process is not attached yet to a visible terminal
     const process = await webcontainer.spawn('/bin/jsh', ['--osc', ...args], {
       terminal: {
         cols: terminal.cols ?? 80,
@@ -152,21 +189,21 @@ export class BoltShell {
     const input = process.input.getWriter();
     this.#shellInputStream = input;
 
-    const [internalOutput, terminalOutput] = process.output.tee();
+    // Tee the output so we can have three independent readers
+    const [streamA, streamB] = process.output.tee();
+    const [streamC, streamD] = streamB.tee();
 
     const jshReady = withResolvers<void>();
 
     let isInteractive = false;
-    terminalOutput.pipeTo(
+    streamA.pipeTo(
       new WritableStream({
         write(data) {
           if (!isInteractive) {
             const [, osc] = data.match(/\x1b\]654;([^\x07]+)\x07/) || [];
 
             if (osc === 'interactive') {
-              // wait until we see the interactive OSC
               isInteractive = true;
-
               jshReady.resolve();
             }
           }
@@ -177,8 +214,6 @@ export class BoltShell {
     );
 
     terminal.onData((data) => {
-      // console.log('terminal onData', { data, isInteractive });
-
       if (isInteractive) {
         input.write(data);
       }
@@ -186,13 +221,149 @@ export class BoltShell {
 
     await jshReady.promise;
 
-    return { process, output: internalOutput };
+    // Return all streams for use in init
+    return { process, terminalStream: streamA, commandStream: streamC, expoUrlStream: streamD };
+  }
+
+  // Dedicated background watcher for Expo URL
+  private async _watchExpoUrlInBackground(stream: ReadableStream<string>) {
+    const reader = stream.getReader();
+
+    let buffer = '';
+
+    const expoUrlRegex = /(exp:\/\/[^\s]+)/;
+
+    while (true) {
+      const { value, done } = await reader.read();
+
+      if (done) {
+        break;
+      }
+
+      buffer += value || '';
+
+      const expoUrlMatch = buffer.match(expoUrlRegex);
+
+      if (expoUrlMatch) {
+        const cleanUrl = expoUrlMatch[1]
+          .replace(/[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g, '')
+          .replace(/[^\x20-\x7E]+$/g, '');
+        expoUrlAtom.set(cleanUrl);
+        buffer = buffer.slice(buffer.indexOf(expoUrlMatch[1]) + expoUrlMatch[1].length);
+      }
+
+      if (buffer.length > 2048) {
+        buffer = buffer.slice(-2048);
+      }
+    }
+  }
+
+  get terminal() {
+    return this.#terminal;
+  }
+
+  get process() {
+    return this.#process;
+  }
+
+  async stop(expectedSessionId?: string) {
+    const state = this.executionState.get();
+
+    if (!state?.active || (expectedSessionId !== undefined && state.sessionId !== expectedSessionId)) {
+      return;
+    }
+
+    state.abort?.();
+    this.terminal?.input('\x03');
+
+    /*
+     * The command reader owns the output stream. Wait for its exit signal
+     * before a chat reset removes files still watched by the dev server.
+     */
+    await state.executionPrms;
+  }
+
+  async executeCommand(
+    sessionId: string,
+    command: string,
+    abort?: () => void,
+    abortSignal?: AbortSignal,
+  ): Promise<ExecutionResult> {
+    if (!this.process || !this.terminal) {
+      return undefined;
+    }
+
+    const prepared = this.#commandPreparationQueue.then(async () => {
+      if (abortSignal?.aborted) {
+        return { executionPromise: Promise.resolve(undefined) };
+      }
+
+      const state = this.executionState.get();
+
+      if (state?.active) {
+        /*
+         * The outgoing reader consumes exit before the incoming reader consumes
+         * prompt. Both signals can arrive in the same WebContainer output chunk.
+         */
+        await this.stop(state.sessionId);
+      } else {
+        this.terminal!.input('\x03');
+      }
+
+      await this.waitTillOscCode('prompt');
+
+      if (abortSignal?.aborted) {
+        return { executionPromise: Promise.resolve(undefined) };
+      }
+
+      this.terminal!.input(command.trim() + '\n');
+
+      const executionPromise = this.getCurrentExecutionResult();
+      this.executionState.set({ sessionId, active: true, executionPrms: executionPromise, abort });
+
+      /*
+       * Release preparation once the command starts; a dev server can run until
+       * the next command interrupts it without blocking the preparation queue.
+       */
+      return { executionPromise };
+    });
+    this.#commandPreparationQueue = prepared.then(
+      () => undefined,
+      () => undefined,
+    );
+
+    const { executionPromise } = await prepared;
+
+    const resp = await executionPromise;
+
+    if (this.executionState.get()?.executionPrms === executionPromise) {
+      this.executionState.set({ sessionId, active: false });
+    }
+
+    if (resp) {
+      try {
+        resp.output = cleanTerminalOutput(resp.output);
+      } catch (error) {
+        console.log('failed to format terminal output', error);
+      }
+
+      recordTerminalCommand({
+        terminalName: 'Bolt Terminal',
+        command,
+        output: resp.output,
+        exitCode: resp.exitCode,
+      });
+    }
+
+    return resp;
   }
 
   async getCurrentExecutionResult(): Promise<ExecutionResult> {
     const { output, exitCode } = await this.waitTillOscCode('exit');
     return { output, exitCode };
   }
+
+  onQRCodeDetected?: (qrCode: string) => void;
 
   async waitTillOscCode(waitCode: string) {
     let fullOutput = '';
@@ -205,25 +376,33 @@ export class BoltShell {
     const tappedStream = this.#outputStream;
 
     while (true) {
+      const oscPattern = /\x1b\]654;([^\x07=]+)=?((-?\d+):(\d+))?\x07/g;
+
+      let match: RegExpExecArray | null;
+
+      while ((match = oscPattern.exec(this.#outputBuffer))) {
+        if (match[1] === 'exit') {
+          exitCode = parseInt(match[4], 10);
+        }
+
+        if (match[1] === waitCode) {
+          const end = match.index + match[0].length;
+          fullOutput += this.#outputBuffer.slice(0, end);
+          this.#outputBuffer = this.#outputBuffer.slice(end);
+
+          return { output: fullOutput, exitCode };
+        }
+      }
+
       const { value, done } = await tappedStream.read();
 
       if (done) {
+        fullOutput += this.#outputBuffer;
+        this.#outputBuffer = '';
         break;
       }
 
-      const text = value || '';
-      fullOutput += text;
-
-      // Check if command completion signal with exit code
-      const [, osc, , , code] = text.match(/\x1b\]654;([^\x07=]+)=?((-?\d+):(\d+))?\x07/) || [];
-
-      if (osc === 'exit') {
-        exitCode = parseInt(code, 10);
-      }
-
-      if (osc === waitCode) {
-        break;
-      }
+      this.#outputBuffer += value || '';
     }
 
     return { output: fullOutput, exitCode };

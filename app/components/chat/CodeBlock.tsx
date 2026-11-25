@@ -1,11 +1,25 @@
 import { memo, useEffect, useState } from 'react';
-import { bundledLanguages, codeToHtml, isSpecialLang, type BundledLanguage, type SpecialLanguage } from 'shiki';
+import type { BundledLanguage } from 'shiki';
+import styles from './CodeBlock.module.scss';
+import { sanitizeCodeHtml } from '~/lib/security/sanitize';
 import { classNames } from '~/utils/classNames';
 import { createScopedLogger } from '~/utils/logger';
-
-import styles from './CodeBlock.module.scss';
+import { highlightCode } from '~/utils/syntax-highlighter-client';
 
 const logger = createScopedLogger('CodeBlock');
+
+const SPECIAL_LANGUAGES = ['ansi', 'plaintext', 'plain', 'text', 'txt'];
+type SpecialLanguage = (typeof SPECIAL_LANGUAGES)[number];
+
+const isSpecialLanguage = (language: string): language is SpecialLanguage => SPECIAL_LANGUAGES.includes(language);
+
+/**
+ * Escapes HTML special characters to prevent XSS when rendering raw code
+ * in the lightweight streaming fallback (no Shiki).
+ */
+function escapeHtml(text: string): string {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
 
 interface CodeBlockProps {
   className?: string;
@@ -13,10 +27,24 @@ interface CodeBlockProps {
   language?: BundledLanguage | SpecialLanguage;
   theme?: 'light-plus' | 'dark-plus';
   disableCopy?: boolean;
+
+  /**
+   * When true, skip expensive Shiki tokenization and render a plain `<pre>`
+   * with escaped HTML instead.  Full syntax highlighting runs once streaming
+   * stops (i.e. `isStreaming` flips to false).
+   */
+  isStreaming?: boolean;
 }
 
 export const CodeBlock = memo(
-  ({ className, code, language = 'plaintext', theme = 'dark-plus', disableCopy = false }: CodeBlockProps) => {
+  ({
+    className,
+    code,
+    language = 'plaintext',
+    theme = 'dark-plus',
+    disableCopy = false,
+    isStreaming = false,
+  }: CodeBlockProps) => {
     const [html, setHTML] = useState<string | undefined>(undefined);
     const [copied, setCopied] = useState(false);
 
@@ -35,18 +63,44 @@ export const CodeBlock = memo(
     };
 
     useEffect(() => {
-      if (language && !isSpecialLang(language) && !(language in bundledLanguages)) {
-        logger.warn(`Unsupported language '${language}'`);
+      /*
+       * During active streaming the code string changes on every token.
+       * Running Shiki's full tokenizer each time is O(code-length) per token —
+       * the single biggest CPU bottleneck during streaming.  Instead we render
+       * a lightweight escaped <pre> and defer highlighting until the stream
+       * finishes.
+       */
+      if (isStreaming) {
+        setHTML(
+          `<pre class="shiki" style="background-color:var(--shiki-bg,#1e1e1e);color:var(--shiki-fg,#d4d4d4);padding:1em;border-radius:0.5em;overflow-x:auto"><code>${escapeHtml(code)}</code></pre>`,
+        );
+        return undefined;
       }
 
-      logger.trace(`Language = ${language}`);
+      if (isSpecialLanguage(language)) {
+        setHTML(`<pre><code>${escapeHtml(code)}</code></pre>`);
+        return undefined;
+      }
 
-      const processCode = async () => {
-        setHTML(await codeToHtml(code, { lang: language, theme }));
+      const effectiveLanguage: BundledLanguage = language;
+      logger.trace(`Language = ${effectiveLanguage}`);
+
+      let cancelled = false;
+
+      highlightCode(code, effectiveLanguage, theme)
+        .then((highlightedCode) => {
+          if (!cancelled) {
+            setHTML(highlightedCode);
+          }
+        })
+        .catch((error: unknown) => {
+          logger.error('Failed to highlight code', error);
+        });
+
+      return () => {
+        cancelled = true;
       };
-
-      processCode();
-    }, [code]);
+    }, [code, language, theme, isStreaming]);
 
     return (
       <div className={classNames('relative group text-left', className)}>
@@ -75,8 +129,20 @@ export const CodeBlock = memo(
             </button>
           )}
         </div>
-        <div dangerouslySetInnerHTML={{ __html: html ?? '' }}></div>
+        <div dangerouslySetInnerHTML={{ __html: sanitizeCodeHtml(html ?? '') }}></div>
       </div>
+    );
+  },
+
+  // Optimization: Only re-render if props actually changed
+  (prevProps, nextProps) => {
+    return (
+      prevProps.code === nextProps.code &&
+      prevProps.language === nextProps.language &&
+      prevProps.theme === nextProps.theme &&
+      prevProps.className === nextProps.className &&
+      prevProps.disableCopy === nextProps.disableCopy &&
+      prevProps.isStreaming === nextProps.isStreaming
     );
   },
 );

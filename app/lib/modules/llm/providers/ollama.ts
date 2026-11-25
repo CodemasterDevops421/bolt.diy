@@ -1,8 +1,10 @@
+import { wrapLanguageModel, type LanguageModel } from 'ai';
+import { createOllama } from 'ollama-ai-provider-v2';
 import { BaseProvider } from '~/lib/modules/llm/base-provider';
+import { getEnv } from '~/lib/modules/llm/env';
 import type { ModelInfo } from '~/lib/modules/llm/types';
 import type { IProviderSetting } from '~/types/model';
-import type { LanguageModelV1 } from 'ai';
-import { ollama } from 'ollama-ai-provider';
+import { logger } from '~/utils/logger';
 
 interface OllamaModelDetails {
   parent_model: string;
@@ -26,8 +28,6 @@ export interface OllamaApiResponse {
   models: OllamaModel[];
 }
 
-export const DEFAULT_NUM_CTX = process?.env?.DEFAULT_NUM_CTX ? parseInt(process.env.DEFAULT_NUM_CTX, 10) : 32768;
-
 export default class OllamaProvider extends BaseProvider {
   name = 'Ollama';
   getApiKeyLink = 'https://ollama.com/download';
@@ -36,32 +36,57 @@ export default class OllamaProvider extends BaseProvider {
 
   config = {
     baseUrlKey: 'OLLAMA_API_BASE_URL',
+    baseUrl: 'http://127.0.0.1:11434',
   };
 
   staticModels: ModelInfo[] = [];
+
+  getDefaultNumCtx(serverEnv?: Env): number {
+    const envRecord = this.convertEnvToRecord(serverEnv);
+    const configured = Number(envRecord.DEFAULT_NUM_CTX || process.env.DEFAULT_NUM_CTX || getEnv().DEFAULT_NUM_CTX);
+
+    return Number.isSafeInteger(configured) && configured > 0 ? configured : 65_536;
+  }
+
+  private _resolveBaseUrl(
+    apiKeys?: Record<string, string>,
+    settings?: IProviderSetting,
+    serverEnv?: Record<string, string>,
+  ): string {
+    let { baseUrl } = this.getProviderBaseUrlAndKey({
+      apiKeys,
+      providerSettings: settings,
+      serverEnv,
+      defaultBaseUrlKey: 'OLLAMA_API_BASE_URL',
+      defaultApiTokenKey: '',
+    });
+
+    if (!baseUrl) {
+      throw new Error('No baseUrl found for Ollama provider');
+    }
+
+    baseUrl = this.resolveDockerUrl(baseUrl, serverEnv);
+
+    return baseUrl;
+  }
 
   async getDynamicModels(
     apiKeys?: Record<string, string>,
     settings?: IProviderSetting,
     serverEnv: Record<string, string> = {},
   ): Promise<ModelInfo[]> {
+    const baseUrl = this._resolveBaseUrl(apiKeys, settings, serverEnv);
+
     try {
-      const { baseUrl } = this.getProviderBaseUrlAndKey({
-        apiKeys,
-        providerSettings: settings,
-        serverEnv,
-        defaultBaseUrlKey: 'OLLAMA_API_BASE_URL',
-        defaultApiTokenKey: '',
+      const response = await fetch(`${baseUrl}/api/tags`, {
+        signal: this.createTimeoutSignal(),
       });
 
-      if (!baseUrl) {
-        return [];
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
 
-      const response = await fetch(`${baseUrl}/api/tags`);
       const data = (await response.json()) as OllamaApiResponse;
-
-      // console.log({ ollamamodels: data.models });
 
       return data.models.map((model: OllamaModel) => ({
         name: model.name,
@@ -69,38 +94,64 @@ export default class OllamaProvider extends BaseProvider {
         provider: this.name,
         maxTokenAllowed: 8000,
       }));
-    } catch (e) {
-      console.error('Failed to get Ollama models:', e);
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'TimeoutError') {
+        logger.warn('Ollama model fetch timed out — is Ollama running?');
+
+        return [];
+      }
+
+      if (error instanceof TypeError && error.message.includes('fetch')) {
+        logger.warn(`Ollama not reachable at ${baseUrl} — is Ollama running?`);
+
+        return [];
+      }
+
+      logger.error('Error fetching Ollama models:', error);
+
       return [];
     }
   }
+
   getModelInstance: (options: {
     model: string;
-    serverEnv: Env;
+    serverEnv?: Env;
     apiKeys?: Record<string, string>;
     providerSettings?: Record<string, IProviderSetting>;
-  }) => LanguageModelV1 = (options) => {
+  }) => LanguageModel = (options) => {
     const { apiKeys, providerSettings, serverEnv, model } = options;
-    let { baseUrl } = this.getProviderBaseUrlAndKey({
-      apiKeys,
-      providerSettings,
-      serverEnv: serverEnv as any,
-      defaultBaseUrlKey: 'OLLAMA_API_BASE_URL',
-      defaultApiTokenKey: '',
+    const envRecord = this.convertEnvToRecord(serverEnv);
+
+    const baseUrl = this._resolveBaseUrl(apiKeys, providerSettings?.[this.name], envRecord);
+
+    logger.debug('Ollama Base Url used: ', baseUrl);
+
+    const ollamaProvider = createOllama({
+      baseURL: `${baseUrl}/api`,
     });
 
-    // Backend: Check if we're running in Docker
-    const isDocker = process.env.RUNNING_IN_DOCKER === 'true';
+    const numCtx = this.getDefaultNumCtx(serverEnv);
 
-    baseUrl = isDocker ? baseUrl.replace('localhost', 'host.docker.internal') : baseUrl;
-    baseUrl = isDocker ? baseUrl.replace('127.0.0.1', 'host.docker.internal') : baseUrl;
+    return wrapLanguageModel({
+      model: ollamaProvider.chat(model),
+      middleware: {
+        specificationVersion: 'v4',
 
-    const ollamaInstance = ollama(model, {
-      numCtx: DEFAULT_NUM_CTX,
-    }) as LanguageModelV1 & { config: any };
+        // The chat adapter reads generation settings from providerOptions on each call.
+        transformParams: async ({ params }) => {
+          const ollama = params.providerOptions?.ollama;
+          const options = ollama?.options;
+          const overrides = options && typeof options === 'object' && !Array.isArray(options) ? options : {};
 
-    ollamaInstance.config.baseURL = `${baseUrl}/api`;
-
-    return ollamaInstance;
+          return {
+            ...params,
+            providerOptions: {
+              ...params.providerOptions,
+              ollama: { ...ollama, options: { num_ctx: numCtx, ...overrides } },
+            },
+          };
+        },
+      },
+    });
   };
 }

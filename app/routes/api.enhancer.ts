@@ -1,73 +1,45 @@
-import { type ActionFunctionArgs } from '@remix-run/cloudflare';
-
-//import { StreamingTextResponse, parseStreamPart } from 'ai';
+import type { UIMessage } from 'ai';
+import type { ActionFunctionArgs } from 'react-router';
+import { toApiErrorResponse, toMissingCredentialError } from '~/lib/.server/api/errors';
+import { readJsonBody } from '~/lib/.server/api/read-body';
+import { REQUEST_LIMITS, enhancerRequestSchema, parseBody } from '~/lib/.server/api/schemas';
 import { streamText } from '~/lib/.server/llm/stream-text';
+import { getApiKeysFromCookie, getProviderSettingsFromCookie } from '~/lib/api/cookies';
+import { createMessage } from '~/lib/persistence/messageMigration';
 import { stripIndents } from '~/utils/stripIndent';
-import type { IProviderSetting, ProviderInfo } from '~/types/model';
 
 export async function action(args: ActionFunctionArgs) {
   return enhancerAction(args);
 }
 
-function parseCookies(cookieHeader: string) {
-  const cookies: any = {};
-
-  // Split the cookie string by semicolons and spaces
-  const items = cookieHeader.split(';').map((cookie) => cookie.trim());
-
-  items.forEach((item) => {
-    const [name, ...rest] = item.split('=');
-
-    if (name && rest) {
-      // Decode the name and value, and join value parts in case it contains '='
-      const decodedName = decodeURIComponent(name.trim());
-      const decodedValue = decodeURIComponent(rest.join('=').trim());
-      cookies[decodedName] = decodedValue;
-    }
-  });
-
-  return cookies;
-}
-
 async function enhancerAction({ context, request }: ActionFunctionArgs) {
-  const { message, model, provider } = await request.json<{
-    message: string;
-    model: string;
-    provider: ProviderInfo;
-    apiKeys?: Record<string, string>;
-  }>();
+  /*
+   * `provider` used to be destructured from an unvalidated body, so `{ provider: {} }`
+   * threw a TypeError reading `.name` and surfaced as a 500. Validated up front now.
+   */
+  let body;
 
-  const { name: providerName } = provider;
+  try {
+    const rawBody = await readJsonBody(request, { maxBytes: REQUEST_LIMITS.MAX_LLMCALL_BODY_BYTES });
 
-  // validate 'model' and 'provider' fields
-  if (!model || typeof model !== 'string') {
-    throw new Response('Invalid or missing model', {
-      status: 400,
-      statusText: 'Bad Request',
-    });
+    body = parseBody(enhancerRequestSchema, rawBody, 'enhancer');
+  } catch (error) {
+    return toApiErrorResponse(error);
   }
 
-  if (!providerName || typeof providerName !== 'string') {
-    throw new Response('Invalid or missing provider', {
-      status: 400,
-      statusText: 'Bad Request',
-    });
-  }
+  const { message, model } = body;
+  const providerName = body.provider.name;
 
   const cookieHeader = request.headers.get('Cookie');
-
-  // Parse the cookie's value (returns an object or null if no cookie exists)
-  const apiKeys = JSON.parse(parseCookies(cookieHeader || '').apiKeys || '{}');
-  const providerSettings: Record<string, IProviderSetting> = JSON.parse(
-    parseCookies(cookieHeader || '').providers || '{}',
-  );
+  const apiKeys = getApiKeysFromCookie(cookieHeader);
+  const providerSettings = getProviderSettingsFromCookie(cookieHeader);
 
   try {
     const result = await streamText({
       messages: [
-        {
+        createMessage({
           role: 'user',
-          content:
+          text:
             `[Model: ${model}]\n\n[Provider: ${providerName}]\n\n` +
             stripIndents`
             You are a professional prompt engineer specializing in crafting precise, effective prompts.
@@ -97,32 +69,40 @@ async function enhancerAction({ context, request }: ActionFunctionArgs) {
               ${message}
             </original_prompt>
           `,
-        },
+        }) as unknown as Omit<UIMessage, 'id'>,
       ],
-      env: context.cloudflare.env,
+      env: context.cloudflare?.env as any,
       apiKeys,
       providerSettings,
+      options: {
+        system:
+          'You are a senior software principal architect, you should help the user analyse the user query and enrich it with the necessary context and constraints to make it more specific, actionable, and effective. You should also ensure that the prompt is self-contained and uses professional language. Your response should ONLY contain the enhanced prompt text. Do not include any explanations, metadata, or wrapper tags.',
+
+        /*
+         * onError: (event) => {
+         *   throw new Response(null, {
+         *     status: 500,
+         *     statusText: 'Internal Server Error',
+         *   });
+         * }
+         */
+      },
     });
 
+    // Return the text stream directly since it's already text data
     return new Response(result.textStream, {
       status: 200,
       headers: {
-        'Content-Type': 'text/plain; charset=utf-8',
+        'Content-Type': 'text/event-stream',
+        Connection: 'keep-alive',
+        'Cache-Control': 'no-cache',
       },
     });
   } catch (error: unknown) {
-    console.log(error);
-
     if (error instanceof Error && error.message?.includes('API key')) {
-      throw new Response('Invalid or missing API key', {
-        status: 401,
-        statusText: 'Unauthorized',
-      });
+      return toApiErrorResponse(toMissingCredentialError(providerName, error.message));
     }
 
-    throw new Response(null, {
-      status: 500,
-      statusText: 'Internal Server Error',
-    });
+    return toApiErrorResponse(error, providerName);
   }
 }

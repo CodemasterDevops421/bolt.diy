@@ -1,10 +1,23 @@
-import { getSystemPrompt } from './prompts/prompts';
+import { getFineTunedPrompt } from './prompts/new-prompt';
 import optimized from './prompts/optimized';
+import { getProjectToolPrompt } from './prompts/project-tools';
+import { getTinyTimPrompt } from './prompts/tiny-tim';
+import type { DesignScheme } from '~/types/design-scheme';
 
 export interface PromptOptions {
   cwd: string;
   allowedHtmlElements: string[];
   modificationTagName: string;
+  designScheme?: DesignScheme;
+  projectTools?: boolean;
+  supabase?: {
+    isConnected: boolean;
+    hasSelectedProject: boolean;
+    credentials?: {
+      anonKey?: string;
+      supabaseUrl?: string;
+    };
+  };
 }
 
 export class PromptLibrary {
@@ -18,12 +31,17 @@ export class PromptLibrary {
   > = {
     default: {
       label: 'Default Prompt',
-      description: 'This is the battle tested default system Prompt',
-      get: (options) => getSystemPrompt(options.cwd),
+      description: 'Optimized prompt with improved tool usage and error recovery',
+      get: (options) => getFineTunedPrompt(options.cwd, options.supabase, options.designScheme),
     },
-    optimized: {
-      label: 'Optimized Prompt (experimental)',
-      description: 'an Experimental version of the prompt for lower token usage',
+    'tiny-tim': {
+      label: 'Tiny Tim',
+      description: 'Optimized for small models with terse format and modern 2026 standards',
+      get: (options) => getTinyTimPrompt(options.cwd, options.supabase, options.designScheme),
+    },
+    'experimental-prompt': {
+      label: 'Experimental Prompt',
+      description: 'Experimental version of the prompt for lower token usage',
       get: (options) => optimized(options),
     },
   };
@@ -37,13 +55,28 @@ export class PromptLibrary {
       };
     });
   }
-  static getPropmtFromLibrary(promptId: string, options: PromptOptions) {
-    const prompt = this.library[promptId];
 
-    if (!prompt) {
-      throw 'Prompt Now Found';
+  /**
+   * Resolves a prompt template by id, falling back to the default template.
+   *
+   * `promptId` is persisted in localStorage and in exported settings, so it
+   * outlives the ids that produced it — they have been renamed several times
+   * (`og-prompt`, `simple-sal`, `diligent-dan`, …). An unknown id therefore
+   * means a stale preference, not a fatal error: throwing here used to abort
+   * the whole chat request with a bare string, which surfaced as the baffling
+   * "Prompt Now Found" provider error.
+   */
+  static getPromptFromLibrary(promptId: string, options: PromptOptions): string {
+    if (options.projectTools) {
+      return getProjectToolPrompt(options);
     }
 
-    return this.library[promptId]?.get(options);
+    const prompt = this.library[promptId] ?? this.library.default;
+
+    if (!prompt) {
+      throw new Error(`No prompt template is registered for "${promptId}" and no default exists.`);
+    }
+
+    return prompt.get(options);
   }
 }

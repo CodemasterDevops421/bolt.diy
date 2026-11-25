@@ -1,8 +1,8 @@
+import { createOpenAI } from '@ai-sdk/openai';
+import type { LanguageModel } from 'ai';
 import { BaseProvider } from '~/lib/modules/llm/base-provider';
 import type { ModelInfo } from '~/lib/modules/llm/types';
 import type { IProviderSetting } from '~/types/model';
-import type { LanguageModelV1 } from 'ai';
-import { createOpenAI } from '@ai-sdk/openai';
 
 export default class HuggingFaceProvider extends BaseProvider {
   name = 'HuggingFace';
@@ -26,6 +26,30 @@ export default class HuggingFaceProvider extends BaseProvider {
       maxTokenAllowed: 8000,
     },
     {
+      name: 'codellama/CodeLlama-34b-Instruct-hf',
+      label: 'CodeLlama-34b-Instruct (HuggingFace)',
+      provider: 'HuggingFace',
+      maxTokenAllowed: 8000,
+    },
+    {
+      name: 'NousResearch/Hermes-3-Llama-3.1-8B',
+      label: 'Hermes-3-Llama-3.1-8B (HuggingFace)',
+      provider: 'HuggingFace',
+      maxTokenAllowed: 8000,
+    },
+    {
+      name: 'Qwen/Qwen2.5-Coder-32B-Instruct',
+      label: 'Qwen2.5-Coder-32B-Instruct (HuggingFace)',
+      provider: 'HuggingFace',
+      maxTokenAllowed: 8000,
+    },
+    {
+      name: 'Qwen/Qwen2.5-72B-Instruct',
+      label: 'Qwen2.5-72B-Instruct (HuggingFace)',
+      provider: 'HuggingFace',
+      maxTokenAllowed: 8000,
+    },
+    {
       name: 'meta-llama/Llama-3.1-70B-Instruct',
       label: 'Llama-3.1-70B-Instruct (HuggingFace)',
       provider: 'HuggingFace',
@@ -37,6 +61,24 @@ export default class HuggingFaceProvider extends BaseProvider {
       provider: 'HuggingFace',
       maxTokenAllowed: 8000,
     },
+    {
+      name: '01-ai/Yi-1.5-34B-Chat',
+      label: 'Yi-1.5-34B-Chat (HuggingFace)',
+      provider: 'HuggingFace',
+      maxTokenAllowed: 8000,
+    },
+    {
+      name: 'codellama/CodeLlama-34b-Instruct-hf',
+      label: 'CodeLlama-34b-Instruct (HuggingFace)',
+      provider: 'HuggingFace',
+      maxTokenAllowed: 8000,
+    },
+    {
+      name: 'NousResearch/Hermes-3-Llama-3.1-8B',
+      label: 'Hermes-3-Llama-3.1-8B (HuggingFace)',
+      provider: 'HuggingFace',
+      maxTokenAllowed: 8000,
+    },
   ];
 
   getModelInstance(options: {
@@ -44,7 +86,7 @@ export default class HuggingFaceProvider extends BaseProvider {
     serverEnv: Env;
     apiKeys?: Record<string, string>;
     providerSettings?: Record<string, IProviderSetting>;
-  }): LanguageModelV1 {
+  }): LanguageModel {
     const { model, serverEnv, apiKeys, providerSettings } = options;
 
     const { apiKey } = this.getProviderBaseUrlAndKey({
@@ -64,6 +106,6 @@ export default class HuggingFaceProvider extends BaseProvider {
       apiKey,
     });
 
-    return openai(model);
+    return openai.chat(model);
   }
 }

@@ -1,91 +1,47 @@
-# Frequently Asked Questions (FAQ)
+# Frequently Asked Questions
 
-<details>
-<summary><strong>What are the best models for bolt.diy?</strong></summary>
+These answers cover setup and troubleshooting questions that recur in the [closed issue tracker](https://github.com/stackblitz-labs/bolt.diy/issues?q=is%3Aissue+state%3Aclosed). Check the current [README](README.md) and [open issues](https://github.com/stackblitz-labs/bolt.diy/issues) for changes and active reports.
 
-For the best experience with bolt.diy, we recommend using the following models:
+## Providers and models
 
-- **Claude 3.5 Sonnet (old)**: Best overall coder, providing excellent results across all use cases
-- **Gemini 2.0 Flash**: Exceptional speed while maintaining good performance
-- **GPT-4o**: Strong alternative to Claude 3.5 Sonnet with comparable capabilities
-- **DeepSeekCoder V2 236b**: Best open source model (available through OpenRouter, DeepSeek API, or self-hosted)
-- **Qwen 2.5 Coder 32b**: Best model for self-hosting with reasonable hardware requirements
+### How do I add or change an API key?
 
-**Note**: Models with less than 7b parameters typically lack the capability to properly interact with bolt!
-</details>
+In bolt.diy, open **Settings → Providers**, enable the provider, then select it in the chat composer and choose **Edit API Key**. You can also configure supported provider variables in `.env.local` at the repository root. Restart the development server after changing environment variables.
 
-<details>
-<summary><strong>How do I get the best results with bolt.diy?</strong></summary>
+Keys entered in the UI are stored in browser cookies and sent with requests. A key indicator means a value is saved; it does not verify that the provider accepts it. Keep environment files and browser access private. For an authentication error, confirm the selected provider, key, and model, then check the browser console and server or container logs. The missing-key reports often come down to credentials not reaching the selected provider (for example, [issue #446](https://github.com/stackblitz-labs/bolt.diy/issues/446)).
 
-- **Be specific about your stack**:  
-  Mention the frameworks or libraries you want to use (e.g., Astro, Tailwind, ShadCN) in your initial prompt. This ensures that bolt.diy scaffolds the project according to your preferences.
+For Docker Compose, keep `.env` synchronized with `.env.local`: Compose uses `.env` for variable substitution and passes both files into the container. Run `./scripts/setup-env.sh` after editing `.env.local`, or copy it to `.env` manually. Never commit either file.
 
-- **Use the enhance prompt icon**:  
-  Before sending your prompt, click the *enhance* icon to let the AI refine your prompt. You can edit the suggested improvements before submitting.
+### Why is the model list empty, or why does chat keep loading without a reply?
 
-- **Scaffold the basics first, then add features**:  
-  Ensure the foundational structure of your application is in place before introducing advanced functionality. This helps bolt.diy establish a solid base to build on.
+Confirm that the intended provider is enabled and selected, that its API key or local endpoint is configured, and that the selected model is available to that provider. For hosted providers, check the provider account, key permissions, and service status. For local providers, make sure the model server is running and reachable from bolt.diy. Then inspect the browser console and server/container logs for the provider error. A closed report about a hosted model request that stayed loading is [issue #1491](https://github.com/stackblitz-labs/bolt.diy/issues/1491).
 
-- **Batch simple instructions**:  
-  Combine simple tasks into a single prompt to save time and reduce API credit consumption. For example:  
-  *"Change the color scheme, add mobile responsiveness, and restart the dev server."*
-</details>
+### Can I use Ollama or LM Studio?
 
-<details>
-<summary><strong>How do I contribute to bolt.diy?</strong></summary>
+Yes. Start the Ollama or LM Studio server, enable it under **Settings → Providers**, and set its base URL if needed. For a local development server, the usual endpoints are `http://127.0.0.1:11434` for Ollama and `http://127.0.0.1:1234` for LM Studio. Make sure the model is installed or loaded in that service.
 
-Check out our [Contribution Guide](CONTRIBUTING.md) for more details on how to get involved!
-</details>
+When bolt.diy runs in Docker, `127.0.0.1` points to the container. Use a host-reachable address such as `http://host.docker.internal:11434` or `http://host.docker.internal:1234`; the Compose configuration adds this host mapping. The endpoint setup has come up in closed reports such as [issue #762](https://github.com/stackblitz-labs/bolt.diy/issues/762).
 
-<details>
-<summary><strong>What are the future plans for bolt.diy?</strong></summary>
+### Can I connect an OpenAI-compatible service that is not listed by name?
 
-Visit our [Roadmap](https://roadmap.sh/r/ottodev-roadmap-2ovzo) for the latest updates.  
-New features and improvements are on the way!
-</details>
+Try the **OpenAI Like** provider and configure its base URL and model list. If the service does not implement the compatible API expected by that provider, it needs a dedicated provider implementation in the repository. See the provider examples under `app/lib/modules/llm/providers/` and register new implementations in `app/lib/modules/llm/registry.ts`.
 
-<details>
-<summary><strong>Why are there so many open issues/pull requests?</strong></summary>
+## Projects and hosting
 
-bolt.diy began as a small showcase project on @ColeMedin's YouTube channel to explore editing open-source projects with local LLMs. However, it quickly grew into a massive community effort!  
+### Where are chats and project data saved? Do they sync across devices?
 
-We're forming a team of maintainers to manage demand and streamline issue resolution. The maintainers are rockstars, and we're also exploring partnerships to help the project thrive.
-</details>
+Chat history and snapshots are saved in IndexedDB in the current browser profile. Other settings are stored in browser storage or cookies. This data does not automatically sync to another browser or device, and clearing the site's browser data can remove it. Export a project or push it to a repository before clearing browser data or moving to another device.
 
-<details>
-<summary><strong>How do local LLMs compare to larger models like Claude 3.5 Sonnet for bolt.diy?</strong></summary>
+### Can I host bolt.diy for multiple users with accounts and shared projects?
 
-While local LLMs are improving rapidly, larger models like GPT-4o, Claude 3.5 Sonnet, and DeepSeek Coder V2 236b still offer the best results for complex applications. Our ongoing focus is to improve prompts, agents, and the platform to better support smaller local LLMs.
-</details>
+The app does not include user accounts, server-side project storage, or multi-user project synchronization. Its chat and project state is local to each browser profile. A self-hosted server can provide the app, but it does not turn browser data into shared storage. This distinction was discussed in [issue #1730](https://github.com/stackblitz-labs/bolt.diy/issues/1730).
 
-<details>
-<summary><strong>Common Errors and Troubleshooting</strong></summary>
+### Is bolt.diy still being developed?
 
-### **"There was an error processing this request"**
-This generic error message means something went wrong. Check both:
-- The terminal (if you started the app with Docker or `pnpm`).
-- The developer console in your browser (press `F12` or right-click > *Inspect*, then go to the *Console* tab).
+The maintainers described the current direction in [issue #2097](https://github.com/stackblitz-labs/bolt.diy/issues/2097): no new features are planned; work is focused on maintenance, dependency and security updates, and keeping the existing stack working. Check the [releases](https://github.com/stackblitz-labs/bolt.diy/releases) for shipped updates.
 
-### **"x-api-key header missing"**
-This error is sometimes resolved by restarting the Docker container.  
-If that doesn't work, try switching from Docker to `pnpm` or vice versa. We're actively investigating this issue.
+## Getting help
 
-### **Blank preview when running the app**
-A blank preview often occurs due to hallucinated bad code or incorrect commands.  
-To troubleshoot:
-- Check the developer console for errors.
-- Remember, previews are core functionality, so the app isn't broken! We're working on making these errors more transparent.
+### What should I include when reporting a problem?
 
-### **"Everything works, but the results are bad"**
-Local LLMs like Qwen-2.5-Coder are powerful for small applications but still experimental for larger projects. For better results, consider using larger models like GPT-4o, Claude 3.5 Sonnet, or DeepSeek Coder V2 236b.
-
-### **"Received structured exception #0xc0000005: access violation"**
-If you are getting this, you are probably on Windows. The fix is generally to update the [Visual C++ Redistributable](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist?view=msvc-170)
-
-### **"Miniflare or Wrangler errors in Windows"**
-You will need to make sure you have the latest version of Visual Studio C++ installed (14.40.33816), more information here https://github.com/stackblitz-labs/bolt.diy/issues/19.
-</details>
-
----
-
-Got more questions? Feel free to reach out or open an issue in our GitHub repo!
+Include the operating system, browser or run method (local development, Docker, or desktop app), bolt.diy version or commit, steps to reproduce, and the exact error. For provider problems, include the provider and model name, but **never include API keys or other secrets**. Check the browser console and terminal/container logs, and search the [closed issues](https://github.com/stackblitz-labs/bolt.diy/issues?q=is%3Aissue+state%3Aclosed) and [open issues](https://github.com/stackblitz-labs/bolt.diy/issues) before creating a new report.

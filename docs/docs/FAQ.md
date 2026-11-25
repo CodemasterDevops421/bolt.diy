@@ -1,91 +1,59 @@
-# Frequently Asked Questions (FAQ)
+# Frequently Asked Questions
 
-<details>
-<summary><strong>What are the best models for bolt.diy?</strong></summary>
+## Models and setup
 
-For the best experience with bolt.diy, we recommend using the following models:
+??? question "Which models should I use?"
+    Model availability and capability change over time. Browse the model list for your configured provider in the application. For coding, choose a model with strong code skills and enough context for your project; use a smaller model when speed or cost matters. Local providers such as Ollama and LM Studio are options when you want to run models on your own machine.
 
-- **Claude 3.5 Sonnet (old)**: Best overall coder, providing excellent results across all use cases
-- **Gemini 2.0 Flash**: Exceptional speed while maintaining good performance
-- **GPT-4o**: Strong alternative to Claude 3.5 Sonnet with comparable capabilities
-- **DeepSeekCoder V2 236b**: Best open source model (available through OpenRouter, DeepSeek API, or self-hosted)
-- **Qwen 2.5 Coder 32b**: Best model for self-hosting with reasonable hardware requirements
+??? question "How do I configure an API key?"
+    In the app, enable a provider under **Settings → Providers**, select it in the chat composer, choose **Edit API Key**, and save the key. You can also set supported provider variables in `.env.local` at the repository root. The key indicator only means that a key is stored; it does not validate the key with the provider.
 
-**Note**: Models with less than 7b parameters typically lack the capability to properly interact with bolt!
-</details>
+    Keys entered in the UI are stored in JavaScript-accessible browser cookies and sent to the application server with requests. Protect access to the browser and use HTTPS when exposing the app remotely. Never commit `.env.local` or `.env` files.
 
-<details>
-<summary><strong>How do I get the best results with bolt.diy?</strong></summary>
+??? question "How do I use Ollama or LM Studio with Docker?"
+    Set `OLLAMA_API_BASE_URL` or `LMSTUDIO_API_BASE_URL` to an address reachable from the container. Inside Docker, `127.0.0.1` points to the container. On supported systems, use a host address such as `host.docker.internal`.
 
-- **Be specific about your stack**:  
-  Mention the frameworks or libraries you want to use (e.g., Astro, Tailwind, ShadCN) in your initial prompt. This ensures that bolt.diy scaffolds the project according to your preferences.
+??? question "How do I use OpenRouter's free model router?"
+    Choose **OpenRouter** in the provider selector and **Free Models Router** (`openrouter/free`) in the model selector. Availability and rate limits are controlled by OpenRouter.
 
-- **Use the enhance prompt icon**:  
-  Before sending your prompt, click the *enhance* icon to let the AI refine your prompt. You can edit the suggested improvements before submitting.
+## Projects and integrations
 
-- **Scaffold the basics first, then add features**:  
-  Ensure the foundational structure of your application is in place before introducing advanced functionality. This helps bolt.diy establish a solid base to build on.
+??? question "How do I start with a particular framework?"
+    Mention the framework or stack in your first prompt. When a matching starter is available, bolt.diy can import it and continue with your requested changes. Starters can change over time; review the generated project and check the preview after the build.
 
-- **Batch simple instructions**:  
-  Combine simple tasks into a single prompt to save time and reduce API credit consumption. For example:  
-  *"Change the color scheme, add mobile responsiveness, and restart the dev server."*
-</details>
+??? question "How do I use MCP tools?"
+    Configure an MCP server under **Settings → MCP Servers**. Then open the attachment menu beside the prompt composer and select the tools you want available for that prompt. Only select tools from servers you trust.
 
-<details>
-<summary><strong>How do I contribute to bolt.diy?</strong></summary>
+??? question "How do I connect Supabase?"
+    Connect Supabase and select a project from the chat interface before asking bolt.diy to work with its database. Database setup and credentials are managed through that connection; the app's WebContainer does not include the Supabase CLI.
 
-Check out our [Contribution Guide](CONTRIBUTING.md) for more details on how to get involved!
-</details>
+??? question "How do I import or publish a project?"
+    Connect the relevant service under **Settings → Integrations → Connectors**. Available project and deployment actions depend on the service and project. Follow the in-app flow for connection, permissions, and deployment status. You can also export a project as a ZIP.
 
-<details>
-<summary><strong>What are the future plans for bolt.diy?</strong></summary>
+## Troubleshooting
 
-Visit our [Roadmap](https://roadmap.sh/r/ottodev-roadmap-2ovzo) for the latest updates.  
-New features and improvements are on the way!
-</details>
+??? error "A request fails with an API key error"
+    Confirm the provider is enabled and selected, and that the key is present in the provider's **Edit API Key** dialog or in the server environment. A stored-key indicator does not confirm provider-side validity. Check the provider's account status and the app/server logs for the response details.
 
-<details>
-<summary><strong>Why are there so many open issues/pull requests?</strong></summary>
+??? error "The preview is blank or does not load"
+    Check the terminal for install or development-server errors, confirm that the expected development server is running, and inspect the browser console. Some WebContainer features require a supported browser and secure context. Refreshing the preview can help after the server starts, but fix any reported build errors first.
 
-bolt.diy began as a small showcase project on @ColeMedin's YouTube channel to explore editing open-source projects with local LLMs. However, it quickly grew into a massive community effort!  
+??? error "A local provider cannot be reached from Docker"
+    The address `127.0.0.1` inside the container refers to the container. Set the provider base URL to an address reachable from Docker, such as `host.docker.internal` where supported, and confirm the provider accepts connections from that host.
 
-We're forming a team of maintainers to manage demand and streamline issue resolution. The maintainers are rockstars, and we're also exploring partnerships to help the project thrive.
-</details>
+??? error "Docker Compose reports a missing variable or env file"
+    Compose needs both `.env` and `.env.local`. Copy `.env.example` to `.env.local`, configure the variables you need, and run `./scripts/setup-env.sh` to prepare `.env`. Repeat this after changing `.env.local`; shell environment variables can override Compose substitution values.
 
-<details>
-<summary><strong>How do local LLMs compare to larger models like Claude 3.5 Sonnet for bolt.diy?</strong></summary>
+??? error "An MCP server does not connect"
+    Check the server URL, authentication settings, and server logs. Confirm the server is running and reachable from the application environment, then retry the connection.
 
-While local LLMs are improving rapidly, larger models like GPT-4o, Claude 3.5 Sonnet, and DeepSeek Coder V2 236b still offer the best results for complex applications. Our ongoing focus is to improve prompts, agents, and the platform to better support smaller local LLMs.
-</details>
+??? error "The app does not start locally"
+    Check that Node.js and pnpm meet the versions in [`package.json`](https://github.com/stackblitz-labs/bolt.diy/blob/main/package.json), reinstall dependencies with `pnpm install`, and review the terminal output. For current setup commands, see the [documentation home](index.md) and [repository README](https://github.com/stackblitz-labs/bolt.diy#quick-start).
 
-<details>
-<summary><strong>Common Errors and Troubleshooting</strong></summary>
+## Contributing and support
 
-### **"There was an error processing this request"**
-This generic error message means something went wrong. Check both:
-- The terminal (if you started the app with Docker or `pnpm`).
-- The developer console in your browser (press `F12` or right-click > *Inspect*, then go to the *Console* tab).
+??? question "How do I contribute or report an issue?"
+    Read the [Contributing Guide](CONTRIBUTING.md). Report bugs or request features through the [GitHub issue tracker](https://github.com/stackblitz-labs/bolt.diy/issues).
 
-### **"x-api-key header missing"**
-This error is sometimes resolved by restarting the Docker container.  
-If that doesn't work, try switching from Docker to `pnpm` or vice versa. We're actively investigating this issue.
-
-### **Blank preview when running the app**
-A blank preview often occurs due to hallucinated bad code or incorrect commands.  
-To troubleshoot:
-- Check the developer console for errors.
-- Remember, previews are core functionality, so the app isn't broken! We're working on making these errors more transparent.
-
-### **"Everything works, but the results are bad"**
-Local LLMs like Qwen-2.5-Coder are powerful for small applications but still experimental for larger projects. For better results, consider using larger models like GPT-4o, Claude 3.5 Sonnet, or DeepSeek Coder V2 236b.
-
-### **"Received structured exception #0xc0000005: access violation"**
-If you are getting this, you are probably on Windows. The fix is generally to update the [Visual C++ Redistributable](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist?view=msvc-170)
-
-### **"Miniflare or Wrangler errors in Windows"**
-You will need to make sure you have the latest version of Visual Studio C++ installed (14.40.33816), more information here https://github.com/stackblitz-labs/bolt.diy/issues/19.
-</details>
-
----
-
-Got more questions? Feel free to reach out or open an issue in our GitHub repo!
+??? question "Where can I find the roadmap?"
+    See the project's [public roadmap](https://roadmap.sh/r/ottodev-roadmap-2ovzo). Model and integration support may change between releases, so use the current app and repository documentation for up-to-date details.

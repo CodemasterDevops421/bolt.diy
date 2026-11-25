@@ -1,13 +1,34 @@
 import rehypeRaw from 'rehype-raw';
+import rehypeSanitize, { defaultSchema, type Options as RehypeSanitizeOptions } from 'rehype-sanitize';
 import remarkGfm from 'remark-gfm';
 import type { PluggableList, Plugin } from 'unified';
-import rehypeSanitize, { defaultSchema, type Options as RehypeSanitizeOptions } from 'rehype-sanitize';
+import type { Node as UnistNode, Parent as UnistParent } from 'unist';
 import { SKIP, visit } from 'unist-util-visit';
-import type { UnistNode, UnistParent } from 'node_modules/unist-util-visit/lib';
+
+// Expose the first artifact to the Markdown renderer when the model fenced it as code.
+export function stripCodeFenceFromArtifact(content: string): string {
+  if (!content.includes('__boltArtifact__')) {
+    return content;
+  }
+
+  const lines = content.split('\n');
+  const artifactLineIndex = lines.findIndex((line) => line.includes('__boltArtifact__'));
+
+  if (/^```\w*$/.test(lines[artifactLineIndex - 1]?.trim() ?? '')) {
+    lines[artifactLineIndex - 1] = '';
+  }
+
+  if (/^```$/.test(lines[artifactLineIndex + 1]?.trim() ?? '')) {
+    lines[artifactLineIndex + 1] = '';
+  }
+
+  return lines.join('\n');
+}
 
 export const allowedHTMLElements = [
   'a',
   'b',
+  'button',
   'blockquote',
   'br',
   'code',
@@ -54,14 +75,50 @@ export const allowedHTMLElements = [
   'tr',
   'ul',
   'var',
+  'think',
+  'header',
 ];
+
+// Add custom rehype plugin
+function remarkThinkRawContent() {
+  return (tree: any) => {
+    visit(tree, (node: any) => {
+      if (node.type === 'html' && node.value && node.value.startsWith('<think>')) {
+        const cleanedContent = node.value.slice(7);
+        node.value = `<div class="__boltThought__">${cleanedContent}`;
+
+        return;
+      }
+
+      if (node.type === 'html' && node.value && node.value.startsWith('</think>')) {
+        const cleanedContent = node.value.slice(8);
+        node.value = `</div>${cleanedContent}`;
+      }
+    });
+  };
+}
 
 const rehypeSanitizeOptions: RehypeSanitizeOptions = {
   ...defaultSchema,
   tagNames: allowedHTMLElements,
   attributes: {
     ...defaultSchema.attributes,
-    div: [...(defaultSchema.attributes?.div ?? []), 'data*', ['className', '__boltArtifact__']],
+    div: [
+      ...(defaultSchema.attributes?.div ?? []),
+      'data*',
+      ['className', '__boltArtifact__', '__boltThought__', '__boltQuickAction', '__boltSelectedElement__'],
+
+      // ['className', '__boltThought__']
+    ],
+    button: [
+      ...(defaultSchema.attributes?.button ?? []),
+      'data*',
+      'type',
+      'disabled',
+      'name',
+      'value',
+      ['className', '__boltArtifact__', '__boltThought__', '__boltQuickAction'],
+    ],
   },
   strip: [],
 };
@@ -73,17 +130,39 @@ export function remarkPlugins(limitedMarkdown: boolean) {
     plugins.unshift(limitedMarkdownPlugin);
   }
 
+  plugins.unshift(remarkThinkRawContent);
+
   return plugins;
 }
 
 export function rehypePlugins(html: boolean) {
-  const plugins: PluggableList = [];
+  const plugins: PluggableList = [rehypeFilterAllowedElements];
 
   if (html) {
     plugins.push(rehypeRaw, [rehypeSanitize, rehypeSanitizeOptions]);
   }
 
   return plugins;
+}
+
+/*
+ * react-markdown 10 removed `allowedElements`, so filter the tree ourselves:
+ * elements outside the allowlist are unwrapped, keeping their children.
+ */
+function rehypeFilterAllowedElements() {
+  return (tree: any) => {
+    visit(tree, (node: any, index: number | undefined, parent: any) => {
+      if (node.type !== 'element' || index === undefined || !parent) {
+        return;
+      }
+
+      if (allowedHTMLElements.includes(node.tagName)) {
+        return;
+      }
+
+      parent.children.splice(index, 1, ...node.children);
+    });
+  };
 }
 
 const limitedMarkdownPlugin: Plugin = () => {
